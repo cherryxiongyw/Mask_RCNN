@@ -17,6 +17,7 @@ import matplotlib.patches as patches
 import matplotlib.lines as lines
 from matplotlib.patches import Polygon
 import IPython.display
+import cv2
 
 import utils
 
@@ -75,7 +76,7 @@ def apply_mask(image, mask, color, alpha=0.5):
 
 def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
-                      figsize=(16, 16), ax=None):
+                      figsize=(16, 16), ax=None, show=True):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -142,9 +143,94 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
-    ax.imshow(masked_image.astype(np.uint8))
-    plt.show()
-    
+    if show:
+        ax.imshow(masked_image.astype(np.uint8))
+        plt.show()
+
+    return masked_image.astype(np.uint8)
+
+def get_masked_fixed_color(image, boxes, masks, class_ids, class_names,
+                      colors = None, scores=None, title="",
+                      figsize=(16, 16), ax=None, show=True):
+    """
+    boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
+    masks: [height, width, num_instances]
+    class_ids: [num_instances]
+    class_names: list of class names of the dataset
+    scores: (optional) confidence scores for each box
+    figsize: (optional) the size of the image.
+    """
+    # Number of instances
+    N = boxes.shape[0]
+    if not N:
+        print("\n*** No instances to display *** \n")
+    else:
+        assert boxes.shape[0] == masks.shape[-1] == class_ids.shape[0]
+
+    if not ax:
+        _, ax = plt.subplots(1, figsize=figsize)
+
+    # Generate random colors
+    if colors == None:
+        classN = len(class_names)
+        colors = random_colors(classN)
+
+    # masked_image = image.astype(np.uint32).copy()
+    masked_image = np.zeros(image.shape)
+    output = np.zeros(image.shape)
+    for i in range(N):
+        color = colors[class_ids[i]]
+        print (class_names[class_ids[i]])
+
+        # Bounding box
+        if not np.any(boxes[i]):
+            # Skip this instance. Has no bbox. Likely lost in image cropping.
+            continue
+        y1, x1, y2, x2 = boxes[i]
+        cv2.rectangle(masked_image, (x1, y1), (x2, y2), color, thickness = 2)
+        # Matplot lib rectangle bounding box, TODO: convert to cv2 patches
+        # p = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=2,
+        #                       alpha=0.7, linestyle="dashed",
+        #                       edgecolor=color, facecolor='none')
+        # print (type(p))
+        # ax.add_patch(p)
+
+        # Label
+        class_id = class_ids[i]
+        score = scores[i] if scores is not None else None
+        label = class_names[class_id]
+        x = random.randint(x1, (x1 + x2) // 2)
+        caption = "{} {:.3f}".format(label, score) if score else label
+        # Matplotlib add text caption, TODO: convert use cv2 add text
+        # ax.text(x1, y1 + 8, caption,
+        #         color='w', size=11, backgroundcolor="none")
+        cv2.putText(masked_image, caption, (x1, y1+8), cv2.FONT_HERSHEY_SIMPLEX,
+            1, color)
+
+        # Mask
+        mask = masks[:, :, i]
+        masked_image = apply_mask(masked_image, mask, color)
+
+        # Mask Polygon
+        # Pad to ensure proper polygons for masks that touch image edges.
+        padded_mask = np.zeros(
+            (mask.shape[0] + 2, mask.shape[1] + 2), dtype=np.uint8)
+        padded_mask[1:-1, 1:-1] = mask
+        contours = find_contours(padded_mask, 0.5)
+        for verts in contours:
+            # Subtract the padding and flip (y, x) to (x, y)
+            verts = np.fliplr(verts) - 1
+            print (verts, type(verts), shape)
+            # Draw an edge on object contour
+            cv2.polylines(masked_image, verts, True, color)
+            # p = Polygon(verts, facecolor="none", edgecolor=color)
+            # ax.add_patch(p)
+
+
+    alpha = 0.3
+    cv2.addWeight(masked_image, alpha, image, 1-alpha, 0, output)
+
+    return output
 
 def draw_rois(image, rois, refined_rois, mask, class_ids, class_names, limit=10):
     """
